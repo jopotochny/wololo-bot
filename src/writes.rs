@@ -73,7 +73,7 @@ pub(crate) async fn delete_ping(pool: &sqlx::PgPool, ping: Ping) -> bool {
 pub(crate) async fn update_notified_at_for_ping(pool: &sqlx::PgPool, ping: Ping) -> bool {
     let now = chrono::offset::Utc::now();
     let result = sqlx::query(
-        "UPDATE ping_list SET notified_at = $3 WHERE discord_user_id = $1 AND discord_channel_id = $2  RETURNING *",
+        "UPDATE ping_list SET last_notified = $3 WHERE discord_user_id = $1 AND discord_channel_id = $2  RETURNING *",
     )
         .bind(ping.user_discord_id)
         .bind(ping.discord_channel_id)
