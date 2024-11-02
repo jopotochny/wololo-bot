@@ -1,4 +1,3 @@
-mod util;
 mod queries;
 mod structs;
 mod writes;
@@ -12,9 +11,10 @@ use shuttle_openai::async_openai;
 use shuttle_openai::async_openai::config::OpenAIConfig;
 use shuttle_runtime::SecretStore;
 use tracing::{error, info};
-use crate::queries::{get_all_pings_except_for_user, get_ping, get_user};
+use crate::queries::{get_all_pings_except_for_user, get_ping, get_user, is_user_admin};
 use crate::structs::WololoUser;
-use crate::writes::{create_ping, create_user, delete_ping, update_notified_at_for_ping};
+use crate::writes::{create_admin_user, create_ping, create_user, delete_ping, update_notified_at_for_ping};
+use regex::Regex;
 
 struct Bot {
     database: sqlx::PgPool
@@ -39,7 +39,8 @@ async fn get_or_create_user(pool: &sqlx::PgPool, discord_id: u64) -> Option<Wolo
 #[async_trait]
 impl EventHandler for Bot {
     async fn message(&self, ctx: Context, msg: Message) {
-        let stripped_content = util::remove_whitespace(&msg.content);
+        let stripped_content = msg.content.trim();
+
         let user_discord_id = msg.author.id.get();
         let discord_channel_id = msg.channel_id.get();
         let discord_channel_name = msg.channel_id.name(&ctx.http).await.unwrap();
@@ -47,8 +48,9 @@ impl EventHandler for Bot {
         if msg.author.bot {
             return;
         }
+        info!("Received message from discord user {} in channel {} ({})", user_discord_id, discord_channel_id, discord_channel_name);
         // check commands first
-        match stripped_content.as_str() {
+        match stripped_content {
             "!hello" => if let Err(e) = msg.channel_id.say(&ctx.http, "world!").await {
                 error!("Error sending message: {:?}", e);
             }
@@ -133,13 +135,15 @@ impl EventHandler for Bot {
                         }
                         if should_notify {
                             let user = serenity::all::UserId::new(ping.user_discord_id as u64);
-                            let builder = serenity::builder::CreateMessage::new().content(format!("@{} is trying to get a stack for dota in #{}.\n\n(You can unsubscribe from notifications in #{} by going there and typing !game-notifications-off)", msg.author.name, discord_channel_name, discord_channel_name ));
+                            let builder = serenity::builder::CreateMessage::new().content(format!("@{} is trying to get a stack for dota in #{}.\n\n(You can unsubscribe from notifications in #{} by going there and typing !game-notification-off)", msg.author.name, discord_channel_name, discord_channel_name ));
                             let result = user.direct_message(&ctx.http, builder).await;
                             if result.is_err() {
                                 error!("Error sending dm to {} (id {}): {:?}", msg.author.name, user_discord_id, result.unwrap_err());
                             }
                             else {
-                                update_notified_at_for_ping(&self.database, ping).await;
+                                if update_notified_at_for_ping(&self.database, ping).await.is_err() {
+                                    error!("Unable to update notified_at for user {}", user.get())
+                                }
                             }
                         }
 
@@ -148,7 +152,39 @@ impl EventHandler for Bot {
             }
             _ => {}
         }
+        let add_admin_re = Regex::new(r"^!admin .*").unwrap();
         // otherwise maybe later we do other stuff here
+        if add_admin_re.is_match(stripped_content) {
+            if let Some(_) = get_user(&self.database, user_discord_id).await {
+                if is_user_admin(&self.database, user_discord_id).await.is_ok() {
+                    // caller is an admin, lets add the
+                    for mentioned_user in msg.mentions {
+                        if is_user_admin(&self.database, mentioned_user.id.get()).await.is_ok() {
+                            if let Err(e) = msg.channel_id.say(&ctx.http, format!("@{} {} is already an admin.", msg.author.name, mentioned_user.name)).await {
+                                error!("Error sending message: {:?}", e);
+                            }
+                        }
+                        else if create_admin_user(&self.database, mentioned_user.id.get()).await.is_ok() {
+                            if let Err(e) = msg.channel_id.say(&ctx.http, format!("@{} {} has been added as an admin.", msg.author.name, mentioned_user.name)).await {
+                                error!("Error sending message: {:?}", e);
+                            }
+                        }
+                        else {
+                            if let Err(e) = msg.channel_id.say(&ctx.http, format!("@{} I was unable to add {} as an admin.", msg.author.name, mentioned_user.name)).await {
+                                error!("Error sending message: {:?}", e);
+                            }
+                        }
+                    }
+
+                }
+                else {
+                    if let Err(e) = msg.channel_id.say(&ctx.http, format!("@{} You are not an admin.", msg.author.name)).await {
+                        error!("Error sending message: {:?}", e);
+                    }
+                }
+            }
+
+        }
     }
 
     async fn ready(&self, _: Context, ready: Ready) {

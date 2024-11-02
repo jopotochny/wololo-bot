@@ -1,7 +1,7 @@
 use chrono::{TimeZone, Utc};
-use sqlx::{Row};
+use sqlx::{Error, Row};
 use tracing::error;
-use crate::structs::Ping;
+use crate::structs::{Ping};
 use crate::structs::WololoUser;
 
 pub(crate) async fn get_user(pool: &sqlx::PgPool, discord_id: u64) -> Option<WololoUser> {
@@ -101,4 +101,14 @@ pub(crate) async fn get_all_pings_except_for_user(pool: &sqlx::PgPool, user_disc
             pings
         },
     }
+}
+
+pub(crate) async fn is_user_admin(pool: &sqlx::PgPool, discord_id: u64) -> Result<bool, Error> {
+    let _ = sqlx::query(
+        "SELECT discord_user_id FROM admins WHERE discord_user_id = $1",
+    )
+        .bind(discord_id as i64)
+        .fetch_one(pool)
+        .await?;
+    Ok(true)
 }

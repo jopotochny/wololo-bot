@@ -1,5 +1,6 @@
+use sqlx::Error;
 use tracing::error;
-use crate::structs::{Ping, WololoUser};
+use crate::structs::{AdminUser, Ping, WololoUser};
 
 pub(crate) async fn create_user(pool: &sqlx::PgPool, discord_id: u64) -> Option<WololoUser> {
     let user = WololoUser {
@@ -70,22 +71,39 @@ pub(crate) async fn delete_ping(pool: &sqlx::PgPool, ping: Ping) -> bool {
 }
 
 
-pub(crate) async fn update_notified_at_for_ping(pool: &sqlx::PgPool, ping: Ping) -> bool {
+pub(crate) async fn update_notified_at_for_ping(pool: &sqlx::PgPool, ping: Ping) -> Result<Ping, Error> {
     let now = chrono::offset::Utc::now();
-    let result = sqlx::query(
+    let mut transaction = pool.begin().await?;
+    sqlx::query(
+        "SELECT FROM users WHERE discord_id = $1"
+    ).bind(ping.user_discord_id)
+        .execute(&mut *transaction)
+        .await?;
+    let _ = sqlx::query(
         "UPDATE ping_list SET last_notified = $3 WHERE discord_user_id = $1 AND discord_channel_id = $2  RETURNING *",
     )
         .bind(ping.user_discord_id)
         .bind(ping.discord_channel_id)
         .bind(now.timestamp())
-        .fetch_one(pool)
-        .await;
-    match result {
-        Ok(_) => true,
-        Err(e) => {
-            error!("Unable to update last_notified of ping for user {} channel {}: {}", ping.user_discord_id, ping.discord_channel_id, e);
-            false
-        },
-    }
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(Ping {
+        user_discord_id: ping.user_discord_id,
+        discord_channel_id: ping.discord_channel_id,
+        created_at: ping.created_at,
+        last_notified: Option::from(now)
+    })
 
+}
+
+pub(crate) async fn create_admin_user(pool: &sqlx::PgPool, discord_id: u64) -> Result<AdminUser, Error> {
+    let _ = sqlx::query(
+        "INSERT into admins (discord_user_id) VALUES ($1) RETURNING * ",
+    ).bind(discord_id as i64)
+        .fetch_one(pool)
+        .await?;
+    Ok(AdminUser {
+        discord_id: discord_id as i64
+    })
 }
