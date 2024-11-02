@@ -1,7 +1,7 @@
 use chrono::{TimeZone, Utc};
 use sqlx::{Error, Row};
 use tracing::error;
-use crate::structs::{Ping};
+use crate::structs::{ParentMessageChildMessage, Ping};
 use crate::structs::WololoUser;
 
 pub(crate) async fn get_user(pool: &sqlx::PgPool, discord_id: u64) -> Option<WololoUser> {
@@ -111,4 +111,18 @@ pub(crate) async fn is_user_admin(pool: &sqlx::PgPool, discord_id: u64) -> Resul
         .fetch_one(pool)
         .await?;
     Ok(true)
+}
+
+pub(crate) async fn get_parent_message_id_for_child_message_id(pool: &sqlx::PgPool, child_id: u64) -> Result<ParentMessageChildMessage, Error> {
+    let row = sqlx::query(
+        "SELECT parent, child, parent_channel_id, child_channel_id from message_children WHERE child=$1",
+    ).bind(child_id as i64)
+        .fetch_one(pool)
+        .await?;
+    Ok( ParentMessageChildMessage {
+        parent: row.get("parent"),
+        parent_channel_id: row.get("parent_channel_id"),
+        child: row.get("child"),
+        child_channel_id: row.get("child_channel_id"),
+    })
 }

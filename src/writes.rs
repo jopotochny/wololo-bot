@@ -1,6 +1,6 @@
 use sqlx::Error;
 use tracing::error;
-use crate::structs::{AdminUser, Ping, WololoUser};
+use crate::structs::{AdminUser, ParentMessageChildMessage, Ping, WololoUser};
 
 pub(crate) async fn create_user(pool: &sqlx::PgPool, discord_id: u64) -> Option<WololoUser> {
     let user = WololoUser {
@@ -106,4 +106,26 @@ pub(crate) async fn create_admin_user(pool: &sqlx::PgPool, discord_id: u64) -> R
     Ok(AdminUser {
         discord_id: discord_id as i64
     })
+}
+
+pub(crate) async fn create_child_for_message(pool: &sqlx::PgPool, parent_msg_child_msg: ParentMessageChildMessage) -> Result<bool, Error> {
+    let _ = sqlx::query(
+        "INSERT into message_children (parent, child, parent_channel_id, child_channel_id) VALUES ($1, $2, $3, $4) RETURNING * ",
+    ).bind(parent_msg_child_msg.parent)
+        .bind(parent_msg_child_msg.child)
+        .bind(parent_msg_child_msg.parent_channel_id)
+        .bind(parent_msg_child_msg.child_channel_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(true)
+}
+
+pub(crate) async fn delete_child_for_message(pool: &sqlx::PgPool, parent_msg_child_msg: ParentMessageChildMessage) -> Result<bool, Error> {
+    let _ = sqlx::query(
+        "DELETE from message_children WHERE parent=$1 AND child=$2 RETURNING *",
+    ).bind(parent_msg_child_msg.parent)
+        .bind(parent_msg_child_msg.child)
+        .fetch_one(pool)
+        .await?;
+    Ok(true)
 }

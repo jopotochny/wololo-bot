@@ -12,10 +12,11 @@ use shuttle_openai::async_openai;
 use shuttle_openai::async_openai::config::OpenAIConfig;
 use shuttle_runtime::SecretStore;
 use tracing::{error, info};
-use crate::queries::{get_all_pings_except_for_user, get_ping, get_user, is_user_admin};
-use crate::structs::WololoUser;
-use crate::writes::{create_admin_user, create_ping, create_user, delete_ping, update_notified_at_for_ping};
+use crate::queries::{get_all_pings_except_for_user, get_parent_message_id_for_child_message_id, get_ping, get_user, is_user_admin};
+use crate::structs::{ParentMessageChildMessage, WololoUser};
+use crate::writes::{create_admin_user, create_child_for_message, create_ping, create_user, delete_child_for_message, delete_ping, update_notified_at_for_ping};
 use regex::Regex;
+use serenity::all::{ChannelId, MessageId, Reaction};
 
 struct Bot {
     database: sqlx::PgPool
@@ -120,12 +121,22 @@ async fn handle_command(command: &str, rest_of_command: Option<&str>, ctx: Conte
                             }
                         }
 
-                        let builder = serenity::builder::CreateMessage::new().content(format!("@{} is trying to get a stack for dota in #{}. {}\n\n(You can unsubscribe from notifications in #{} by going there and typing {})", msg.author.name, discord_channel_name, additional_context, discord_channel_name, constants::GAME_NOTIFICATION_OFF_CMD));
+                        let builder = serenity::builder::CreateMessage::new().content(format!("@{} is trying to get a stack for dota in #{}. {}\n\n(You can unsubscribe from notifications in #{} by going there and typing {}. You can also let them know you are joining by reacting to this message.)", msg.author.name, discord_channel_name, additional_context, discord_channel_name, constants::GAME_NOTIFICATION_OFF_CMD));
                         let result = user.direct_message(&ctx.http, builder).await;
                         if result.is_err() {
                             error!("Error sending dm to {} (id {}): {:?}", msg.author.name, user_discord_id, result.unwrap_err());
                         }
                         else {
+                            let child_message = result.unwrap();
+                            let parent_msg_child_msg = ParentMessageChildMessage {
+                                parent: msg.id.get() as i64,
+                                child: child_message.id.get() as i64,
+                                parent_channel_id: discord_channel_id as i64,
+                                child_channel_id: child_message.channel_id.get() as i64
+                            };
+                            if let Err(error) = create_child_for_message(database, parent_msg_child_msg).await {
+                                error!("Unable to save message {} as child for parent message {}: {}", child_message.id.get(), msg.id.get(), error);
+                            }
                             if update_notified_at_for_ping(database, ping).await.is_err() {
                                 error!("Unable to update notified_at for user {}", user.get())
                             }
@@ -211,6 +222,27 @@ impl EventHandler for Bot {
         }
 
     }
+    async fn reaction_add(&self, ctx: Context, add_reaction: Reaction) {
+        let message_with_reaction_id = add_reaction.message_id.get();
+        if let Ok(parent_msg_child_msg) = get_parent_message_id_for_child_message_id(&self.database, message_with_reaction_id).await {
+            info!("Received a reaction for a game notification dm: {} in channel: {}", parent_msg_child_msg.child, parent_msg_child_msg.child_channel_id);
+            if let Ok(parent_msg) = &ctx.http.get_message(ChannelId::from(parent_msg_child_msg.parent_channel_id as u64), MessageId::from(parent_msg_child_msg.parent as u64)).await {
+                if let Ok(reactor_user) = add_reaction.user(&ctx.http).await {
+                    if let Err(error) = parent_msg.reply(&ctx.http, format!("@{}: {}", reactor_user.name, add_reaction.emoji)).await {
+                        error!("Error sending reply message: {:?}", error);
+                    }
+                    else {
+                        // don't allow further reactions to cause replies
+                        if let Err(error) = delete_child_for_message(&self.database, parent_msg_child_msg).await {
+                            error!("Unable to delete message_children_row: {:?}", error);
+                        }
+                    }
+
+                }
+            }
+        }
+    }
+
 
     async fn ready(&self, _: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
@@ -230,7 +262,7 @@ async fn serenity(
         .context("'DISCORD_TOKEN' was not found")?;
 
     // Set gateway intents, which decides what events the bot will be notified about
-    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT | GatewayIntents::DIRECT_MESSAGE_REACTIONS;
     let bot = Bot {
         database: pool
     };
