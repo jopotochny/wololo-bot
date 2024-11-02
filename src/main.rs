@@ -1,6 +1,7 @@
 mod queries;
 mod structs;
 mod writes;
+mod constants;
 
 use anyhow::Context as _;
 use serenity::async_trait;
@@ -51,7 +52,7 @@ impl EventHandler for Bot {
         info!("Received message from discord user {} in channel {} ({})", user_discord_id, discord_channel_id, discord_channel_name);
         // check commands first
         match stripped_content {
-            "!hello" => if let Err(e) = msg.channel_id.say(&ctx.http, "world!").await {
+            "!help" => if let Err(e) = msg.channel_id.say(&ctx.http, constants::HELP_TEXT).await {
                 error!("Error sending message: {:?}", e);
             }
             "!register" =>   {
