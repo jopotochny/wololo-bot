@@ -28,10 +28,10 @@ async fn handle_command(command: &str, rest_of_command: Option<&str>, ctx: Conte
     let discord_channel_id = msg.channel_id.get();
     let discord_channel_name = msg.channel_id.name(&ctx.http).await.unwrap();
     match command {
-        "!help" => if let Err(e) = msg.channel_id.say(&ctx.http, constants::HELP_TEXT).await {
+        constants::HELP_CMD => if let Err(e) = msg.channel_id.say(&ctx.http, constants::help_text()).await {
             error!("Error sending message: {:?}", e);
         }
-        "!register" =>   {
+        constants::REGISTER_CMD =>   {
             let user = get_or_create_user(database, user_discord_id).await;
             match user {
                 Some(_) => {
@@ -46,7 +46,7 @@ async fn handle_command(command: &str, rest_of_command: Option<&str>, ctx: Conte
                 }
             }
         }
-        "!game-notification-on" => {
+        constants::GAME_NOTIFICATION_ON_CMD => {
             let ping = get_ping(database, user_discord_id, discord_channel_id).await;
             match ping {
                 Some(_) => {
@@ -71,7 +71,7 @@ async fn handle_command(command: &str, rest_of_command: Option<&str>, ctx: Conte
                 }
             }
         }
-        "!game-notification-off" => {
+        constants::GAME_NOTIFICATION_OFF_CMD => {
             let ping = get_ping(database, user_discord_id, discord_channel_id).await;
             if ping.is_some() {
                 if delete_ping(database, ping.unwrap()).await {
@@ -91,10 +91,10 @@ async fn handle_command(command: &str, rest_of_command: Option<&str>, ctx: Conte
                 }
             }
         }
-        "!any-gamers" => {
+        constants::ANY_GAMERS_CMD => {
             let user = get_user(database, user_discord_id).await;
             if user.is_none() {
-                if let Err(e) = msg.channel_id.say(&ctx.http, format!("@{} You aren't registered in #{}, you can register using !register", msg.author.name, discord_channel_name)).await {
+                if let Err(e) = msg.channel_id.say(&ctx.http, format!("@{} You aren't registered in #{}, you can register using {}", msg.author.name, discord_channel_name, constants::REGISTER_CMD)).await {
                     error!("Error sending message: {:?}", e);
                 }
             }
@@ -120,7 +120,7 @@ async fn handle_command(command: &str, rest_of_command: Option<&str>, ctx: Conte
                             }
                         }
 
-                        let builder = serenity::builder::CreateMessage::new().content(format!("@{} is trying to get a stack for dota in #{}. {}\n\n(You can unsubscribe from notifications in #{} by going there and typing !game-notification-off)", msg.author.name, discord_channel_name, additional_context, discord_channel_name ));
+                        let builder = serenity::builder::CreateMessage::new().content(format!("@{} is trying to get a stack for dota in #{}. {}\n\n(You can unsubscribe from notifications in #{} by going there and typing {})", msg.author.name, discord_channel_name, additional_context, discord_channel_name, constants::GAME_NOTIFICATION_OFF_CMD));
                         let result = user.direct_message(&ctx.http, builder).await;
                         if result.is_err() {
                             error!("Error sending dm to {} (id {}): {:?}", msg.author.name, user_discord_id, result.unwrap_err());
